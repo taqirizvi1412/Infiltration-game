@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adaptive Stealth Infiltration</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0a0a0a;
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            text-align: center;
+            padding: 20px;
+            width: 100%;
+            max-width: 1400px;
+        }
+        
+        canvas {
+            border: 2px solid #00ff41;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.5);
+            background: #111;
+            max-width: 100%;
+            height: auto;
+        }
+        
+        #stats {
+            margin-top: 20px;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-around;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .stat-box {
+            padding: 10px;
+            border: 1px solid #00ff41;
+            background: rgba(0, 255, 65, 0.1);
+            min-width: 200px;
+        }
+        
+        #controls {
+            margin-top: 20px;
+            font-size: 12px;
+        }
+        
+        .alert {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            font-weight: bold;
+            text-shadow: 0 0 20px currentColor;
+            animation: pulse 1s ease-in-out;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        
+        .detected { color: #ff0000; }
+        .success { color: #00ff41; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+            50% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        }
+        
+        #aiMemory {
+            margin-top: 20px;
+            font-size: 12px;
+            border: 1px solid #00ff41;
+            padding: 10px;
+            background: rgba(0, 255, 65, 0.05);
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <h1>STEALTH INFILTRATION: ADAPTIVE AI</h1>
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="stats">
+            <div class="stat-box">
+                <div>ATTEMPTS: <span id="attempts">0</span></div>
+                <div>TOTAL WINS: <span id="totalWins">0</span></div>
+                <div>SUCCESS RATE: <span id="successRate">0%</span></div>
+            </div>
+            <div class="stat-box">
+                <div>AI LEARNING LEVEL: <span id="aiLevel">0</span></div>
+                <div>ACTIVE GUARDS: <span id="guardCount">3</span></div>
+                <div>GUARD VISION: <span id="visionRange">180</span>m</div>
+            </div>
+        </div>
+        
+        <div id="controls">
+            <strong>CONTROLS:</strong> WASD/Arrows to move | SHIFT to crouch (slower but quieter) | R to restart level | ESC to reset game<br>
+            <strong>TIP:</strong> Blue zones are SAFE - guards cannot detect you there!
+        </div>
+        
+        <div id="aiMemory">
+            <strong>AI MEMORY STATUS:</strong> <span id="memoryStatus">Guards are unaware of your tactics</span>
+        </div>
+    </div>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive canvas sizing
+        function resizeCanvas() {
+            const maxWidth = Math.min(window.innerWidth - 40, 1200);
+            const maxHeight = Math.min(window.innerHeight - 250, 800);
+            canvas.width = maxWidth;
+            canvas.height = maxHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Game constants
+        const TILE_SIZE = 20;
+        const GRID_WIDTH = Math.floor(canvas.width / TILE_SIZE);
+        const GRID_HEIGHT = Math.floor(canvas.height / TILE_SIZE);
+        const BASE_VISION_RANGE = 180;
+        const VISION_RANGE_INCREMENT = 10;
+        
+        // AI Learning System
+        class AIMemory {
+            constructor() {
+                this.heatmap = Array(GRID_HEIGHT).fill().map(() => Array(GRID_WIDTH).fill(0));
+                this.playerPaths = [];
+                this.commonHidingSpots = [];
+                this.detectionPoints = [];
+                this.learningRate = 0.1;
+                this.memoryDecay = 0.995;
+            }
+            
+            recordPlayerPosition(x, y) {
+                const gx = Math.floor(x / TILE_SIZE);
+                const gy = Math.floor(y / TILE_SIZE);
+                if (gx >= 0 && gx < GRID_WIDTH && gy >= 0 && gy < GRID_HEIGHT) {
+                    this.heatmap[gy][gx] = Math.min(this.heatmap[gy][gx] + this.learningRate, 1);
+                }
+            }
+            
+            recordDetection(x, y) {
+                this.detectionPoints.push({ x, y, timestamp: Date.now() });
+                const gx = Math.floor(x / TILE_SIZE);
+                const gy = Math.floor(y / TILE_SIZE);
+                for (let dy = -3; dy <= 3; dy++) {
+                    for (let dx = -3; dx <= 3; dx++) {
+                        const nx = gx + dx;
+                        const ny = gy + dy;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (nx >= 0 && nx < GRID_WIDTH && ny >= 0 && ny < GRID_HEIGHT) {
+                            this.heatmap[ny][nx] = Math.min(this.heatmap[ny][nx] + 0.4 / (1 + dist), 1);
+                        }
+                    }
+                }
+            }
+            
+            decayMemory() {
+                for (let y = 0; y < GRID_HEIGHT; y++) {
+                    for (let x = 0; x < GRID_WIDTH; x++) {
+                        this.heatmap[y][x] *= this.memoryDecay;
+                    }
+                }
+            }
+            
+            getHeatValue(x, y) {
+                const gx = Math.floor(x / TILE_SIZE);
+                const gy = Math.floor(y / TILE_SIZE);
+                if (gx >= 0 && gx < GRID_WIDTH && gy >= 0 && gy < GRID_HEIGHT) {
+                    return this.heatmap[gy][gx];
+                }
+                return 0;
+            }
+            
+            getSuggestedPatrolPoint() {
+                let candidates = [];
+                
+                for (let y = 2; y < GRID_HEIGHT - 2; y++) {
+                    for (let x = 2; x < GRID_WIDTH - 2; x++) {
+                        if (this.heatmap[y][x] > 0.15) {
+                            candidates.push({
+                                x: x * TILE_SIZE + TILE_SIZE/2, 
+                                y: y * TILE_SIZE + TILE_SIZE/2,
+                                heat: this.heatmap[y][x]
+                            });
+                        }
+                    }
+                }
+                
+                if (candidates.length > 0) {
+                    candidates.sort((a, b) => b.heat - a.heat);
+                    const topCandidates = candidates.slice(0, Math.min(10, candidates.length));
+                    return topCandidates[Math.floor(Math.random() * topCandidates.length)];
+                }
+                
+                return null;
+            }
+        }
+        
+        // Game state
+        const game = {
+            player: {
+                x: 60,
+                y: 60,
+                size: 15,
+                speed: 2.5,
+                crouching: false,
+                detected: false
+            },
+            guards: [],
+            walls: [],
+            noGoZones: [],
+            objective: null,
+            attempts: 0,
+            successes: 0,
+            totalWins: 0,
+            aiMemory: new AIMemory(),
+            gameOver: false,
+            victory: false,
+            playerTrail: [],
+            baseGuardCount: 3,
+            currentVisionRange: BASE_VISION_RANGE
+        };
+        
+        // Guard class with smooth AI
+        class Guard {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 18;
+                this.baseSpeed = 1.8;
+                this.speed = this.baseSpeed;
+                this.direction = Math.random() * Math.PI * 2;
+                this.targetDirection = this.direction;
+                this.rotationSpeed = 0.08;
+                this.visionAngle = Math.PI / 3;
+                this.visionRange = game.currentVisionRange;
+                this.state = 'patrol';
+                this.patrolTarget = null;
+                this.investigateTarget = null;
+                this.lastPlayerSighting = null;
+                this.alertLevel = 0;
+                this.patrolPoints = [];
+                this.currentPatrolIndex = 0;
+                this.stateTimer = 0;
+                this.stuckCounter = 0;
+                this.lastPositions = [];
+                
+                // Smooth movement properties
+                this.velocity = { x: 0, y: 0 };
+                this.acceleration = 0.1;
+                this.friction = 0.9;
+                this.steeringForce = { x: 0, y: 0 };
+                this.wanderAngle = 0;
+                this.avoidanceForce = { x: 0, y: 0 };
+                
+                this.generatePatrolRoute();
+            }
+            
+            generatePatrolRoute() {
+                this.patrolPoints = [];
+                const numPoints = 4 + Math.floor(Math.random() * 3);
+                
+                for (let i = 0; i < numPoints; i++) {
+                    let point;
+                    let attempts = 0;
+                    do {
+                        point = {
+                            x: 100 + Math.random() * (canvas.width - 200),
+                            y: 100 + Math.random() * (canvas.height - 200)
+                        };
+                        attempts++;
+                    } while ((this.isInNoGoZone(point) || this.isInWall(point)) && attempts < 50);
+                    
+                    if (attempts < 50) {
+                        this.patrolPoints.push(point);
+                    }
+                }
+                
+                // Add AI-suggested points
+                for (let i = 0; i < 2; i++) {
+                    const aiPoint = game.aiMemory.getSuggestedPatrolPoint();
+                    if (aiPoint && !this.isInNoGoZone(aiPoint) && !this.isInWall(aiPoint)) {
+                        const insertIndex = Math.floor(Math.random() * this.patrolPoints.length);
+                        this.patrolPoints.splice(insertIndex, 0, aiPoint);
+                    }
+                }
+            }
+            
+            update() {
+                this.stateTimer++;
+                
+                // Update position history
+                this.lastPositions.push({ x: this.x, y: this.y });
+                if (this.lastPositions.length > 20) {
+                    this.lastPositions.shift();
+                }
+                
+                // Check if stuck
+                if (this.lastPositions.length >= 20) {
+                    const avgMovement = this.calculateAverageMovement();
+                    if (avgMovement < 0.5) {
+                        this.stuckCounter++;
+                        if (this.stuckCounter > 30) {
+                            this.handleStuck();
+                            this.stuckCounter = 0;
+                        }
+                    } else {
+                        this.stuckCounter = Math.max(0, this.stuckCounter - 1);
+                    }
+                }
+                
+                // Check for player detection
+                if (this.canSeePlayer()) {
+                    if (this.state !== 'chase') {
+                        this.state = 'chase';
+                        this.stateTimer = 0;
+                        this.speed = this.baseSpeed * 1.8;
+                    }
+                    this.lastPlayerSighting = { x: game.player.x, y: game.player.y };
+                    game.aiMemory.recordDetection(game.player.x, game.player.y);
+                    this.alertLevel = 100;
+                    
+                    if (!game.player.detected) {
+                        game.player.detected = true;
+                        this.onPlayerDetected();
+                    }
+                }
+                
+                // State machine
+                switch(this.state) {
+                    case 'patrol':
+                        this.patrol();
+                        break;
+                    case 'investigate':
+                        this.investigate();
+                        break;
+                    case 'chase':
+                        this.chase();
+                        break;
+                }
+                
+                // Apply smooth movement
+                this.applySmoothMovement();
+                
+                // Update direction based on velocity
+                if (Math.abs(this.velocity.x) > 0.1 || Math.abs(this.velocity.y) > 0.1) {
+                    this.targetDirection = Math.atan2(this.velocity.y, this.velocity.x);
+                }
+                
+                // Smooth rotation
+                let angleDiff = this.targetDirection - this.direction;
+                while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                this.direction += angleDiff * this.rotationSpeed;
+                
+                // Decay alert level
+                this.alertLevel = Math.max(0, this.alertLevel - 0.5);
+                
+                // Adapt patrol route periodically
+                if (this.stateTimer % 600 === 0) {
+                    this.generatePatrolRoute();
+                }
+            }
+            
+            applySmoothMovement() {
+                // Calculate avoidance force
+                this.calculateWallAvoidance();
+                
+                // Apply forces
+                this.velocity.x += this.steeringForce.x * this.acceleration + this.avoidanceForce.x;
+                this.velocity.y += this.steeringForce.y * this.acceleration + this.avoidanceForce.y;
+                
+                // Apply friction
+                this.velocity.x *= this.friction;
+                this.velocity.y *= this.friction;
+                
+                // Limit velocity
+                const speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y);
+                if (speed > this.speed) {
+                    this.velocity.x = (this.velocity.x / speed) * this.speed;
+                    this.velocity.y = (this.velocity.y / speed) * this.speed;
+                }
+                
+                // Predictive collision check
+                const nextX = this.x + this.velocity.x;
+                const nextY = this.y + this.velocity.y;
+                
+                // Check walls separately for sliding
+                let canMoveX = !this.checkWallCollision(nextX, this.y);
+                let canMoveY = !this.checkWallCollision(this.x, nextY);
+                
+                if (canMoveX) {
+                    this.x = nextX;
+                } else {
+                    this.velocity.x *= -0.5;
+                }
+                
+                if (canMoveY) {
+                    this.y = nextY;
+                } else {
+                    this.velocity.y *= -0.5;
+                }
+                
+                // Keep in bounds
+                this.x = Math.max(this.size/2, Math.min(canvas.width - this.size/2, this.x));
+                this.y = Math.max(this.size/2, Math.min(canvas.height - this.size/2, this.y));
+            }
+            
+            calculateWallAvoidance() {
+                this.avoidanceForce = { x: 0, y: 0 };
+                const lookAheadDistance = 40;
+                const numRays = 16;
+                
+                for (let i = 0; i < numRays; i++) {
+                    const angle = this.direction + (i / numRays) * Math.PI * 2 - Math.PI;
+                    const rayX = Math.cos(angle);
+                    const rayY = Math.sin(angle);
+                    
+                    for (let d = 10; d <= lookAheadDistance; d += 10) {
+                        const checkX = this.x + rayX * d;
+                        const checkY = this.y + rayY * d;
+                        
+                        if (this.checkPointCollision(checkX, checkY) || this.isInNoGoZone({ x: checkX, y: checkY })) {
+                            const force = (lookAheadDistance - d) / lookAheadDistance;
+                            this.avoidanceForce.x -= rayX * force * 0.3;
+                            this.avoidanceForce.y -= rayY * force * 0.3;
+                            break;
+                        }
+                    }
+                }
+                
+                // Normalize avoidance force
+                const mag = Math.sqrt(this.avoidanceForce.x * this.avoidanceForce.x + 
+                                    this.avoidanceForce.y * this.avoidanceForce.y);
+                if (mag > 1) {
+                    this.avoidanceForce.x /= mag;
+                    this.avoidanceForce.y /= mag;
+                }
+            }
+            
+            calculateAverageMovement() {
+                if (this.lastPositions.length < 2) return 10;
+                let totalDist = 0;
+                for (let i = 1; i < this.lastPositions.length; i++) {
+                    const dx = this.lastPositions[i].x - this.lastPositions[i-1].x;
+                    const dy = this.lastPositions[i].y - this.lastPositions[i-1].y;
+                    totalDist += Math.sqrt(dx * dx + dy * dy);
+                }
+                return totalDist / (this.lastPositions.length - 1);
+            }
+            
+            handleStuck() {
+                this.wanderAngle = Math.random() * Math.PI * 2;
+                this.velocity.x = Math.cos(this.wanderAngle) * this.speed;
+                this.velocity.y = Math.sin(this.wanderAngle) * this.speed;
+                this.lastPositions = [];
+            }
+            
+            patrol() {
+                if (!this.patrolTarget || this.distanceTo(this.patrolTarget) < 30) {
+                    this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolPoints.length;
+                    this.patrolTarget = this.patrolPoints[this.currentPatrolIndex];
+                }
+                
+                this.seekTarget(this.patrolTarget, 0.7);
+                
+                // Add wander
+                this.wanderAngle += (Math.random() - 0.5) * 0.2;
+                this.steeringForce.x += Math.cos(this.wanderAngle) * 0.1;
+                this.steeringForce.y += Math.sin(this.wanderAngle) * 0.1;
+                
+                // Check for hotspots
+                if (Math.random() < 0.005) {
+                    const hotspot = game.aiMemory.getSuggestedPatrolPoint();
+                    if (hotspot && this.distanceTo(hotspot) < 300 && !this.isInNoGoZone(hotspot)) {
+                        this.state = 'investigate';
+                        this.investigateTarget = hotspot;
+                        this.stateTimer = 0;
+                        this.speed = this.baseSpeed * 0.5;
+                    }
+                }
+            }
+            
+            investigate() {
+                if (!this.investigateTarget || this.distanceTo(this.investigateTarget) < 20 || this.stateTimer > 240) {
+                    this.state = 'patrol';
+                    this.investigateTarget = null;
+                    this.stateTimer = 0;
+                    return;
+                }
+                
+                this.seekTarget(this.investigateTarget, 0.5);
+                this.wanderAngle += Math.sin(this.stateTimer * 0.05) * 0.3;
+            }
+            
+            chase() {
+                if (!this.lastPlayerSighting || this.distanceTo(this.lastPlayerSighting) < 20 || this.stateTimer > 300) {
+                    this.state = 'investigate';
+                    this.investigateTarget = this.lastPlayerSighting;
+                    this.stateTimer = 0;
+                    this.speed = this.baseSpeed * 0.5;
+                    return;
+                }
+                
+                this.seekTarget(this.lastPlayerSighting, 1.5);
+            }
+            
+            seekTarget(target, speedMultiplier) {
+                const dx = target.x - this.x;
+                const dy = target.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > 0) {
+                    this.steeringForce.x = (dx / dist) * speedMultiplier;
+                    this.steeringForce.y = (dy / dist) * speedMultiplier;
+                    
+                    const targetSpeed = Math.min(dist / 50, 1) * this.baseSpeed * speedMultiplier;
+                    this.speed = this.speed * 0.9 + targetSpeed * 0.1;
+                }
+            }
+            
+            checkPointCollision(x, y) {
+                for (const wall of game.walls) {
+                    if (x >= wall.x && x <= wall.x + wall.width &&
+                        y >= wall.y && y <= wall.y + wall.height) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            checkWallCollision(x, y) {
+                const margin = this.size / 2;
+                for (const wall of game.walls) {
+                    if (x - margin < wall.x + wall.width &&
+                        x + margin > wall.x &&
+                        y - margin < wall.y + wall.height &&
+                        y + margin > wall.y) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            isInWall(point) {
+                return this.checkPointCollision(point.x, point.y);
+            }
+            
+            isInNoGoZone(point) {
+                for (const zone of game.noGoZones) {
+                    if (point.x >= zone.x && point.x <= zone.x + zone.width &&
+                        point.y >= zone.y && point.y <= zone.y + zone.height) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            distanceTo(point) {
+                const dx = point.x - this.x;
+                const dy = point.y - this.y;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+            
+            canSeePlayer() {
+                // Check if player is in safe zone
+                for (const zone of game.noGoZones) {
+                    if (game.player.x >= zone.x && game.player.x <= zone.x + zone.width &&
+                        game.player.y >= zone.y && game.player.y <= zone.y + zone.height) {
+                        return false;
+                    }
+                }
+                
+                const dx = game.player.x - this.x;
+                const dy = game.player.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > this.visionRange) return false;
+                
+                const angleToPlayer = Math.atan2(dy, dx);
+                let angleDiff = Math.abs(angleToPlayer - this.direction);
+                if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+                
+                if (angleDiff > this.visionAngle / 2) return false;
+                
+                return this.hasLineOfSight(game.player.x, game.player.y);
+            }
+            
+            hasLineOfSight(targetX, targetY) {
+                const dx = targetX - this.x;
+                const dy = targetY - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const steps = Math.ceil(distance / 5);
+                
+                for (let i = 0; i <= steps; i++) {
+                    const t = i / steps;
+                    const checkX = this.x + dx * t;
+                    const checkY = this.y + dy * t;
+                    
+                    if (this.checkPointCollision(checkX, checkY)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            
+            castRay(angle, maxDist) {
+                const steps = Math.ceil(maxDist / 5);
+                for (let i = 0; i <= steps; i++) {
+                    const dist = (i / steps) * maxDist;
+                    const x = this.x + Math.cos(angle) * dist;
+                    const y = this.y + Math.sin(angle) * dist;
+                    
+                    if (this.checkPointCollision(x, y)) {
+                        return dist;
+                    }
+                }
+                return maxDist;
+            }
+            
+            onPlayerDetected() {
+                showAlert('DETECTED!', 'detected');
+                game.gameOver = true;
+                game.attempts++;
+                updateStats();
+                
+                for (const pos of game.playerTrail) {
+                    game.aiMemory.recordPlayerPosition(pos.x, pos.y);
+                }
+                
+                setTimeout(resetLevel, 2000);
+            }
+            
+            draw() {
+                // Draw motion trail
+                const speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y);
+                if (speed > 0.5) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillStyle = this.state === 'chase' ? '#ff0000' : 
+                                   this.state === 'investigate' ? '#ffaa00' : '#ff6600';
+                    
+                    for (let i = 1; i <= 3; i++) {
+                        const trailX = this.x - this.velocity.x * i * 2;
+                        const trailY = this.y - this.velocity.y * i * 2;
+                        ctx.globalAlpha = 0.3 / i;
+                        ctx.beginPath();
+                        ctx.arc(trailX, trailY, this.size / 2 - i, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+                
+                // Draw guard body
+                ctx.fillStyle = this.state === 'chase' ? '#ff0000' : 
+                               this.state === 'investigate' ? '#ffaa00' : '#ff6600';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw direction indicator
+                ctx.strokeStyle = ctx.fillStyle;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(
+                    this.x + Math.cos(this.direction) * this.size,
+                    this.y + Math.sin(this.direction) * this.size
+                );
+                ctx.stroke();
+                
+                // Draw vision cone
+                ctx.save();
+                ctx.globalAlpha = 0.25;
+                ctx.fillStyle = this.state === 'chase' ? '#ff0000' : '#ffaa00';
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                
+                const visionSteps = 40;
+                const leftAngle = this.direction - this.visionAngle / 2;
+                const rightAngle = this.direction + this.visionAngle / 2;
+                
+                for (let i = 0; i <= visionSteps; i++) {
+                    const angle = leftAngle + (rightAngle - leftAngle) * (i / visionSteps);
+                    const rayDist = this.castRay(angle, this.visionRange);
+                    const x = this.x + Math.cos(angle) * rayDist;
+                    const y = this.y + Math.sin(angle) * rayDist;
+                    
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+                
+                // Draw alert indicator
+                if (this.alertLevel > 0) {
+                    ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y - this.size, 8, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.fillStyle = '#ff0000';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('!', this.x - 4, this.y - this.size + 5);
+                }
+            }
+        }
+        
+        // Initialize level
+        function initLevel() {
+            // Create walls
+            game.walls = [
+                // Outer walls
+                { x: 0, y: 0, width: canvas.width, height: 10 },
+                { x: 0, y: canvas.height - 10, width: canvas.width, height: 10 },
+                { x: 0, y: 0, width: 10, height: canvas.height },
+                { x: canvas.width - 10, y: 0, width: 10, height: canvas.height },
+                
+                // Interior maze
+                { x: 150, y: 100, width: 20, height: 250 },
+                { x: 300, y: 50, width: 20, height: 200 },
+                { x: 450, y: 150, width: 200, height: 20 },
+                { x: 100, y: 400, width: 300, height: 20 },
+                { x: 500, y: 300, width: 20, height: 200 },
+                { x: 700, y: 100, width: 20, height: 300 },
+                { x: 250, y: 250, width: 150, height: 20 },
+                { x: 400, y: 350, width: 20, height: 150 },
+                { x: 600, y: 450, width: 150, height: 20 },
+                { x: 200, y: 500, width: 250, height: 20 },
+                { x: 850, y: 200, width: 20, height: 300 },
+                { x: 650, y: 250, width: 100, height: 20 },
+                { x: 50, y: 200, width: 70, height: 20 },
+                { x: 350, y: 100, width: 200, height: 20 },
+                { x: 550, y: 50, width: 20, height: 80 },
+                { x: 750, y: 350, width: 80, height: 20 },
+                { x: 100, y: 300, width: 100, height: 20 },
+                { x: 950, y: 100, width: 20, height: 400 },
+                { x: 800, y: 500, width: 100, height: 20 },
+                { x: 150, y: 550, width: 20, height: 100 },
+                { x: 300, y: 600, width: 200, height: 20 },
+                { x: 550, y: 550, width: 20, height: 100 }
+            ];
+            
+            // Filter walls
+            game.walls = game.walls.filter(wall => 
+                wall.x < canvas.width && wall.y < canvas.height &&
+                wall.x + wall.width > 0 && wall.y + wall.height > 0
+            );
+            
+            // Create no-go zones
+            game.noGoZones = [
+                { x: 20, y: 20, width: 80, height: 80 },
+                { x: canvas.width - 100, y: canvas.height - 100, width: 80, height: 80 }
+            ];
+            
+            // Set objective
+            game.objective = { 
+                x: canvas.width - 60, 
+                y: canvas.height - 60, 
+                size: 30 
+            };
+            
+            // Calculate guards
+            const additionalGuards = Math.floor(game.totalWins / 5);
+            const guardCount = game.baseGuardCount + additionalGuards;
+            game.currentVisionRange = BASE_VISION_RANGE + (additionalGuards * VISION_RANGE_INCREMENT);
+            
+            // Create guards
+            game.guards = [];
+            for (let i = 0; i < guardCount; i++) {
+                let x, y;
+                let attempts = 0;
+                
+                do {
+                    const hotspot = game.aiMemory.getSuggestedPatrolPoint();
+                    if (hotspot && Math.random() < 0.6) {
+                        x = hotspot.x + (Math.random() - 0.5) * 200;
+                        y = hotspot.y + (Math.random() - 0.5) * 200;
+                    } else {
+                        x = 200 + Math.random() * (canvas.width - 400);
+                        y = 200 + Math.random() * (canvas.height - 400);
+                    }
+                    
+                    x = Math.max(50, Math.min(canvas.width - 50, x));
+                    y = Math.max(50, Math.min(canvas.height - 50, y));
+                    attempts++;
+                } while (isPositionBlocked(x, y) && attempts < 100);
+                
+                if (attempts < 100) {
+                    const guard = new Guard(x, y);
+                    
+                    // Face away from start zone if nearby
+                    const safeZone1 = game.noGoZones[0];
+                    const dx = x - (safeZone1.x + safeZone1.width/2);
+                    const dy = y - (safeZone1.y + safeZone1.height/2);
+                    if (Math.sqrt(dx*dx + dy*dy) < 200) {
+                        guard.direction = Math.atan2(dy, dx);
+                        guard.targetDirection = guard.direction;
+                    }
+                    
+                    game.guards.push(guard);
+                }
+            }
+            
+            updateStats();
+        }
+        
+        function isPositionBlocked(x, y) {
+            for (const wall of game.walls) {
+                if (x >= wall.x - 20 && x <= wall.x + wall.width + 20 &&
+                    y >= wall.y - 20 && y <= wall.y + wall.height + 20) {
+                    return true;
+                }
+            }
+            
+            for (const zone of game.noGoZones) {
+                if (x >= zone.x && x <= zone.x + zone.width &&
+                    y >= zone.y && y <= zone.y + zone.height) {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        // Input handling
+        const keys = {};
+        window.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            if (e.key.toLowerCase() === 'r') {
+                resetLevel();
+            } else if (e.key.toLowerCase() === 'escape') {
+                if (confirm('Reset all progress and start over?')) {
+                    resetGame();
+                }
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+        
+        // Game functions
+        function updatePlayer() {
+            if (game.gameOver) return;
+            
+            const oldX = game.player.x;
+            const oldY = game.player.y;
+            
+            game.player.crouching = keys['shift'];
+            const speed = game.player.crouching ? game.player.speed * 0.5 : game.player.speed;
+            
+            if (keys['w'] || keys['arrowup']) game.player.y -= speed;
+            if (keys['s'] || keys['arrowdown']) game.player.y += speed;
+            if (keys['a'] || keys['arrowleft']) game.player.x -= speed;
+            if (keys['d'] || keys['arrowright']) game.player.x += speed;
+            
+            // Wall collision
+            for (const wall of game.walls) {
+                if (game.player.x - game.player.size/2 < wall.x + wall.width &&
+                    game.player.x + game.player.size/2 > wall.x &&
+                    game.player.y - game.player.size/2 < wall.y + wall.height &&
+                    game.player.y + game.player.size/2 > wall.y) {
+                    game.player.x = oldX;
+                    game.player.y = oldY;
+                }
+            }
+            
+            // Keep in bounds
+            game.player.x = Math.max(game.player.size/2, Math.min(canvas.width - game.player.size/2, game.player.x));
+            game.player.y = Math.max(game.player.size/2, Math.min(canvas.height - game.player.size/2, game.player.y));
+            
+            // Record trail
+            if (Math.abs(oldX - game.player.x) > 1 || Math.abs(oldY - game.player.y) > 1) {
+                game.playerTrail.push({ x: game.player.x, y: game.player.y });
+                if (game.playerTrail.length % 10 === 0) {
+                    game.aiMemory.recordPlayerPosition(game.player.x, game.player.y);
+                }
+            }
+            
+            // Check objective
+            const dx = game.player.x - game.objective.x;
+            const dy = game.player.y - game.objective.y;
+            if (Math.sqrt(dx * dx + dy * dy) < game.objective.size) {
+                game.victory = true;
+                game.gameOver = true;
+                game.successes++;
+                game.totalWins++;
+                showAlert('MISSION SUCCESS!', 'success');
+                updateStats();
+                
+                for (const pos of game.playerTrail) {
+                    game.aiMemory.recordPlayerPosition(pos.x, pos.y);
+                }
+                
+                game.aiMemory.decayMemory();
+                
+                setTimeout(resetLevel, 2000);
+            }
+        }
+        
+        function resetLevel() {
+            game.player.x = 60;
+            game.player.y = 60;
+            game.player.detected = false;
+            game.gameOver = false;
+            game.victory = false;
+            game.playerTrail = [];
+            initLevel();
+        }
+        
+        function resetGame() {
+            game.attempts = 0;
+            game.successes = 0;
+            game.totalWins = 0;
+            game.aiMemory = new AIMemory();
+            game.currentVisionRange = BASE_VISION_RANGE;
+            resetLevel();
+            updateStats();
+        }
+        
+        function showAlert(text, className) {
+            const existing = document.querySelector('.alert');
+            if (existing) existing.remove();
+            
+            const alert = document.createElement('div');
+            alert.className = `alert ${className}`;
+            alert.textContent = text;
+            document.body.appendChild(alert);
+            setTimeout(() => alert.remove(), 1500);
+        }
+        
+        function updateStats() {
+            const safeUpdate = (id, value) => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.textContent = value;
+                }
+            };
+            
+            safeUpdate('attempts', game.attempts);
+            safeUpdate('totalWins', game.totalWins);
+            const rate = game.attempts > 0 ? ((game.successes / game.attempts) * 100).toFixed(1) : 0;
+            safeUpdate('successRate', rate + '%');
+            
+            // Update guard count and vision range
+            safeUpdate('guardCount', game.guards.length);
+            safeUpdate('visionRange', Math.round(game.currentVisionRange));
+            
+            // AI level
+            let totalHeat = 0;
+            for (let y = 0; y < GRID_HEIGHT; y++) {
+                for (let x = 0; x < GRID_WIDTH; x++) {
+                    totalHeat += game.aiMemory.heatmap[y][x];
+                }
+            }
+            const aiLevel = Math.min(Math.floor(totalHeat / 100), 10);
+            safeUpdate('aiLevel', aiLevel);
+            
+            // Memory status
+            const memoryStatus = document.getElementById('memoryStatus');
+            if (memoryStatus) {
+                if (aiLevel === 0) {
+                    memoryStatus.textContent = 'Guards are unaware of your tactics';
+                } else if (aiLevel < 3) {
+                    memoryStatus.textContent = 'Guards are beginning to learn your patterns';
+                } else if (aiLevel < 6) {
+                    memoryStatus.textContent = 'Guards have adapted to your common routes - they patrol high-activity areas';
+                } else if (aiLevel < 9) {
+                    memoryStatus.textContent = 'Guards have mastered your infiltration patterns and coordinate effectively!';
+                } else {
+                    memoryStatus.textContent = 'MAXIMUM ALERT: Guards have complete knowledge of all infiltration routes!';
+                }
+            }
+            
+            safeUpdate('stealthMode', game.player.crouching ? 'CROUCHED' : 'NORMAL');
+        }
+        
+        function drawHeatmap() {
+            ctx.save();
+            ctx.globalAlpha = 0.2;
+            for (let y = 0; y < GRID_HEIGHT; y++) {
+                for (let x = 0; x < GRID_WIDTH; x++) {
+                    const heat = game.aiMemory.heatmap[y][x];
+                    if (heat > 0.01) {
+                        const intensity = Math.floor(heat * 255);
+                        ctx.fillStyle = `rgb(${intensity}, 0, ${255 - intensity})`;
+                        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    }
+                }
+            }
+            ctx.restore();
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.lineWidth = 0.5;
+            for (let x = 0; x <= canvas.width; x += TILE_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= canvas.height; y += TILE_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw heatmap
+            drawHeatmap();
+            
+            // Draw no-go zones
+            ctx.fillStyle = 'rgba(0, 100, 255, 0.2)';
+            ctx.strokeStyle = '#0066ff';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            for (const zone of game.noGoZones) {
+                ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
+                ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+                
+                ctx.fillStyle = '#0066ff';
+                ctx.font = 'bold 12px Courier New';
+                ctx.fillText('SAFE', zone.x + zone.width/2 - 15, zone.y + zone.height/2);
+            }
+            ctx.setLineDash([]);
+            
+            // Draw walls
+            ctx.fillStyle = '#333';
+            for (const wall of game.walls) {
+                ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+            }
+            
+            // Draw objective
+            ctx.fillStyle = '#00ff41';
+            ctx.strokeStyle = '#00ff41';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(game.objective.x, game.objective.y, game.objective.size / 2, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#00ff41';
+            ctx.font = '24px Arial';
+            ctx.fillText('🎯', game.objective.x - 12, game.objective.y + 8);
+            
+            // Draw player
+            ctx.fillStyle = game.player.detected ? '#ff0000' : '#00ff41';
+            ctx.globalAlpha = game.player.crouching ? 0.6 : 1;
+            ctx.beginPath();
+            ctx.arc(game.player.x, game.player.y, game.player.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            
+            // Draw guards
+            for (const guard of game.guards) {
+                guard.draw();
+            }
+            
+            // Draw UI
+            if (!game.gameOver) {
+                ctx.fillStyle = '#00ff41';
+                ctx.font = '16px Courier New';
+                ctx.fillText('INFILTRATE THE FACILITY', 20, 30);
+                ctx.font = '12px Courier New';
+                ctx.fillText(`Guards: ${game.guards.length} | Vision: ${Math.round(game.currentVisionRange)}m | Heat: ${Math.min(Math.floor(game.aiMemory.getHeatValue(game.player.x, game.player.y) * 100), 100)}%`, 20, 50);
+            }
+        }
+        
+        function gameLoop() {
+            updatePlayer();
+            
+            for (const guard of game.guards) {
+                guard.update();
+            }
+            
+            draw();
+            updateStats();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                initLevel();
+                gameLoop();
+            });
+        } else {
+            initLevel();
+            gameLoop();
+        }
+    </script>
+</body>
+</html>
